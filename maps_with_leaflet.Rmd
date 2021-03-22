@@ -1,0 +1,238 @@
+---
+title: "Maps with Leaflet"
+author: "Akhila Saineni, Nihar Garlapati"
+date: "6/21/2020"
+output:
+  html_document:
+    code_folding: hide
+  word_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(rgdal)
+library(leaflet)
+library(readr)
+library(expss)
+library(mapview)
+library(printr)
+```
+
+## Introduction
+The main objective of this paper is to map out and visualize the characteristics of municipal solid waste landfills in the US based on data collected by United States Environmental Protection Agency (EPA) [1].
+
+## Loading Data
+Firstly, we are loading the County Spatial data using readOGR function and landfill technical data from  https://www.epa.gov/lmop/ using read_excel, later used summary, dim and names functions to view the data. We have later merged counties with the land fill data for zoomed in visuals to concentrate on specific states such as Texas and Florida.
+
+```{r load }
+library("readxl")
+
+setwd("/Users/akhilasaineni/Downloads/HU/2020Summer/DataViz512/5_0606V/gisData")
+landfill_data = read_excel("landfilllmopdata.xlsx")
+
+summary(landfill_data)
+names(landfill_data)
+```
+
+## Methods
+To conduct this analysis, we used expss functions to create baseline statistical tabulations of Waste in place of landfills for each state. 
+The frequency of the ownership type for the landfills is built using fre function, having more number of Public landfills.
+The second baseline statistical table shows landfill capacity, waste in place and the percentage filled by state. The percent filled column is built from waste in place and landfill design capacity. From the statistical table, California state has the highest landfill capacity and waste in place with 35.2 percent filled.
+The third expss table focuses on landfills composting, lfg collection system and flares in place under a range of year buckets.
+
+```{r expss }
+
+library(dplyr)
+
+fre(landfill_data$`Ownership Type`)
+
+
+landfill_data$percent_filled=(landfill_data$`Waste in Place (tons)`/landfill_data$`Landfill Design Capacity (tons)`)
+
+
+
+
+landfill_data %>%
+  filter(`Current Landfill Status` == "Open") %>%
+  tab_cells(`Landfill Design Capacity (tons)`, `Waste in Place (tons)`,
+            `Annual Waste Acceptance Rate (tons per year)`,
+            `percent_filled`) %>% 
+  tab_cols( State) %>%
+  tab_stat_fun(TotalCases=w_sum, method=list) %>%
+  tab_pivot() %>%
+  tab_transpose() %>%
+  tab_sort_desc(percent_filled)
+
+
+
+
+landfill_data %>%
+  mutate(Year_bucket = ifelse(`Year Landfill Opened` %in% 1920:1940, "1920-1940",
+                              ifelse(`Year Landfill Opened` %in% 1940:1960, "1940-1960",
+                                     ifelse(`Year Landfill Opened` %in% 1960:1980, "1960-1980",
+                                            ifelse(`Year Landfill Opened` %in% 1980:2000, "1980-2000",
+                                                   ifelse(`Year Landfill Opened` %in% 2000:2020, "2000-2020", "None")))))) %>%
+  tab_rows(`Composting?`, `LFG Collection System In Place?`, `Flares in Place?`) %>% 
+  tab_cells(total()) %>%
+  tab_cols(Year_bucket) %>% 
+  tab_stat_fun(TotalCases=w_sum, method=list) %>%
+  tab_pivot() %>%
+  tab_transpose()
+
+
+
+```
+
+## Results
+
+### LandFills in the Mainland United States
+We created a leaflet map showing the number of landfills in the united states, The color of the circle indicates the ownership type of the landfill. As we can see the number of landfills are higher in the densely populated areas such as California and New York. Midwest seems to have fewer landfills compared to the coastal regions. Also most of the landfills in the coastal united states are mostly operated publicly. 
+
+```{r leaflet}
+
+
+
+landfill_data$`Ownership Type`=as.factor(landfill_data$`Ownership Type`)
+pal <- colorFactor(c("navy", "red","green","grey","white"), domain = c("Private", "Public","Public/Private", "Unknown",NULL))
+
+leaflet(landfill_data) %>% 
+  addTiles()  %>% 
+  setView(-98, 39, zoom = 4) %>%
+  addCircleMarkers(landfill_data, lng = landfill_data$Longitude, lat = landfill_data$Latitude ,
+                   radius = 3, 
+                   weight = .5, 
+                   #color = "Green", 
+                   color = ~pal(landfill_data$`Ownership Type`),
+                   fillOpacity = 0.5, stroke = FALSE,
+                   label = paste('Landfill Name:', landfill_data$`Landfill Name`))  %>%
+  addLegend("bottomright", pal = pal, values = landfill_data$`Ownership Type`,
+    title = "Ownership Type",
+    opacity = 1
+  )  %>%
+  addLabelOnlyMarkers(lng=-98,lat=52, label="Landfills in USA",
+                      labelOptions = labelOptions(noHide = TRUE, textOnly = TRUE, 
+                                                  textsize = 50))
+
+
+
+
+
+
+
+```
+
+
+
+
+### Landfills in texas and the methane contained.
+Map shows the percent methane contained in the landfills of Texas represented by circle radius and categorized in colors by Current landfill status. The rectangle represents the landfills in the Dallas city. The city of Dallas has the most number of landfills in the state of texas
+
+
+
+```{r leaflet2}
+setwd("/Users/akhilasaineni/Downloads/HU/2020Summer/DataViz512/5_0606V/gisData")
+counties = readOGR(dsn=".", layer="cb_2016_us_county_500k")
+
+tx_counties = counties[counties$STATEFP == 48, ]
+
+landfill_texas = subset(landfill_data, landfill_data$State == "TX")
+
+landfill_status = colorFactor(c("red", "blue", "yellow"),
+                              domain = landfill_texas$`Current Landfill Status`)
+
+tx_landfills = leaflet(tx_counties) %>%
+  addProviderTiles(providers$CartoDB.Positron) %>%
+  addRectangles(lat1 = 33.72434, lng1 = -98.31738, 
+                lat2 = 32.23873, lng2 = -96.28418,
+                fillColor = "transparent", color = "green")%>%
+  addCircleMarkers(data = landfill_texas, weight = .4,
+                   radius = landfill_texas$`Percent Methane` / 5 ,
+                   color =  ~ landfill_status(landfill_texas$`Current Landfill Status`),
+                   label =  paste('Landfill Name:', landfill_texas$`Landfill Name`, 
+                                  ', Methane Percent:', landfill_texas$`Percent Methane`)) %>%
+  addLegend(position = c("bottomright"), title = "Current Landfill Status", 
+            pal = landfill_status, values = ~ landfill_texas$`Current Landfill Status`, 
+            opacity = 1) %>%
+  addMouseCoordinates()
+tx_landfills
+
+```
+
+
+### Number of Landfills by County in Florida
+In the map below, we are looking specifically at the state of Florida, The polygons are used to differentiate counties that have higher number of landfills with the counties with lower landfills. The Miami Dade county seems to have 6 landfills which is the highest.
+
+```{r leaflet3}
+library(dplyr)
+
+
+by_county1=landfill_data %>%
+  filter(landfill_data$State=="FL") %>%
+  group_by(County) %>%
+  summarize( total_waste=sum(`Waste in Place (tons)`, na.rm = TRUE),count_of_landfills=n())
+
+
+fl_county<-counties[counties@data$STATEFP==12,]
+merge=merge(fl_county,by_county1,  by.x="NAME", by.y="County")
+
+
+landfill_florida=subset(landfill_data, landfill_data$State=="FL")
+
+palk = colorQuantile("Reds", unique(merge$count_of_landfills), n = 9)
+
+leaflet(merge) %>%
+    addPolygons(weight=.10,fillOpacity = .2, fillColor = ~palk(merge$count_of_landfills),dashArray = "3",
+           label = paste(merge$NAME,"County", "Count of Landfills",merge$count_of_landfills),
+           highlightOptions = highlightOptions(color = "red", weight = 2,
+                                               bringToFront = TRUE)) %>%
+    addCircleMarkers(landfill_florida, lng = landfill_florida$Longitude, 
+                     lat = landfill_florida$Latitude, radius = 3, weight = .5, 
+                     color = "blue", fillOpacity = 0.5, stroke = FALSE,
+                     label = paste('Landfill Name:', landfill_florida$`Landfill Name`))
+
+```
+### Neighborhood Trash and the landfills in Broward
+In the below map, We are looking the home location along with the neighborhood trash. We can also look at lines connecting home with the two landfills in the same county.
+
+
+```{r leaflet4}
+
+my_trash_image<-'https://gyr.fortlauderdale.gov/Home/ShowPublishedImage/9529/635562345697200000'
+landfill_florida_broward=subset(landfill_florida, landfill_florida$County=="Broward")
+
+#leaflet(landfill_florida_broward) %>% 
+#  addTiles()  %>% 
+#  addCircleMarkers(landfill_florida_broward, lng = landfill_florida_broward$Longitude, lat = landfill_florida_broward$Latitude ,
+#                   radius = 10, 
+#                   weight = .9, 
+#                   color = "Green", 
+#                   #color = ~pal(landfill_data$`Ownership Type`),
+#                   fillOpacity = 0.5, stroke = FALSE,
+#                   label = paste('Landfill Name:', landfill_florida_broward$`Landfill Name`)) %>%
+ 
+# addAwesomeMarkers(-80.10501,
+#             26.12,
+#             icon= awesomeIcons(iconColor = "yellow"),
+#             popup = popupImage(my_trash_image),
+#             popupOptions = popupOptions(noHide = TRUE))   %>%
+#  addPolylines(lng=c(-80.10501,-80.16), lat = c(26.12,26.28)) %>%
+#   addPolylines(lng=c(-80.10501,-80.42495), lat = c(26.12,26.03785)) %>%
+# addMouseCoordinates() 
+
+
+
+```
+
+
+## Bibliography
+
+
+United States Environmental Protection Agency. Retrieved from https://www.epa.gov/lmop/landfill-technical-data
+
+Expss Tables with Labels in R 2019-07-06. Retrieved from https://gdemin.github.io/expss/
+
+Functions for custom tables construction Retrieved from https://rdrr.io/cran/expss/man/tables.html
+
+Leaflet for R. Retrieved from https://rstudio.github.io/leaflet/
+
+Neighbourhood trash image. Retrieved from https://gyr.fortlauderdale.gov/Home/ShowPublishedImage/9529/635562345697200000
