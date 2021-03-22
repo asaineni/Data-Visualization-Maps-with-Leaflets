@@ -1,0 +1,99 @@
+---
+title: "polygon_layer"
+author: "Akhila Saineni, Nihar Garlapati"
+date: "6/9/2020"
+output: 
+  html_document:
+    code_folding: hide
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(rgdal)
+library(leaflet)
+library(readr)
+library(expss)
+```
+
+## Introduction
+The main objective of this paper is to map out and visualize the Covid cases, deaths in the United States and NY state by County based on data collected as of June 8th, 2020. 
+
+## Loading Data
+Firstly, we are loading the County Spatial data using readOGR function and Covid Cases csv file as of 0608 date. For this analysis, we are only considering the covid cases as of latest date and filtering the data for 2020-06-08 date. In order to merge Covid cases data and Counties, we enriched the fips(Covid data) and CNTYIDFP(from County data) as per need.
+
+```{r load}
+setwd("~/Downloads/HU/2020Summer/DataViz512/5_0606V/gisData")
+
+counties = readOGR(dsn=".",layer="cb_2016_us_county_500k")
+
+covid = read.csv("us-counties_0608.csv")
+covid = covid[covid$date == '2020-06-08',]
+covid$fips = as.character(covid$fips)
+covid$fips = ifelse(nchar(covid$fips) == 4, paste0("0",covid$fips), covid$fips)
+summary(covid)
+head(covid)
+
+counties$CNTYIDFP<-paste0(counties$STATEFP,counties$COUNTYFP)
+merge<-merge(counties, covid, by.x ="CNTYIDFP", by.y ="fips")
+
+```
+
+## Methods
+To conduct this analysis we used expss functions to create baseline statistical tabulations of Covid positive cases and deaths reported for each state. The highest number of Covid positive cases and deaths are in New York state 383,591 and 30239 respectively.
+
+```{r expss}
+data = apply_labels(covid,
+                    cases="Total COVID 19 Cases",
+                    deaths="Total COVID 19 Deaths", 
+                    county="County Name",
+                    state="State Name"
+)
+
+data %>%
+  tab_cells(cases, deaths) %>% 
+  tab_cols(total(label = "#Total| |"), state) %>%
+  tab_stat_fun(TotalCases=w_sum, method=list) %>%
+  tab_pivot() %>%
+  tab_transpose()
+  
+```
+
+## Results
+
+### Total Covid Cases in United States by County
+We created a leaflet map showing the total number of Covid positive cases in the United States, which is as follows. The label shows name of the county and state along with number of covid cases and deaths per county with C and D prefixed respectively.
+
+```{r leaflet}
+pal = colorQuantile("Reds", covid$cases, n = 9)
+
+leaflet(merge) %>% setView(-98,39, zoom=4) %>%
+  addPolygons(weight=.10, color="blue",fillOpacity = .2, fillColor = ~pal(cases),
+              label= paste(merge$NAME, ",", merge$state, ":", "C", merge$cases, "D", merge$deaths))
+```
+
+
+### Total Covid Deaths in New York State by County
+We created a leaflet map showing the total number of Covid deaths in the New York state, which is as follows. 
+
+```{r NY}
+covid_newyork=subset(covid, covid$state=="New York")
+
+merge_ny<-merge(counties, covid_newyork, by.x ="CNTYIDFP", by.y ="fips")
+
+pal_ny <- colorQuantile("Blues", domain = covid_newyork$deaths, n=5)
+
+leaflet(merge_ny) %>% setView(-74,43, zoom=6) %>%
+  addPolygons(weight=.30,color="green",fillOpacity = .2, fillColor = ~pal_ny(deaths),
+              label= paste(merge_ny$NAME, "COVID 19 Deaths:", merge_ny$deaths ))
+```
+
+
+## Bibliography
+
+expss: Tables with Labels in R 2019-07-06. Retrieved from https://gdemin.github.io/expss/
+
+tables: Functions for custom tables construction Retrieved from https://rdrr.io/cran/expss/man/tables.html
+
+Leaflet for R - Colors. Retrieved from https://rstudio.github.io/leaflet/colors.html
+
+Covid Data retrieved from https://www.nytimes.com/article/coronavirus-county-data-us.html
